@@ -262,6 +262,45 @@ class SchemaTests(PostgreSQLTestCase):
         self.assertNotIn(constraint.name, self.get_constraints(Scene._meta.db_table))
         Scene.objects.create(scene="ScEnE 10", setting="Sir Bedemir's Castle")
 
+    @isolate_apps("postgres_tests")
+    def test_opclass_func_validate_constraints(self):
+        constraint_name = "test_opclass_func_validate_constraints"
+
+        class Place(Model):
+            name = CharField(max_length=255)
+
+            class Meta:
+                app_label = "postgres_tests"
+                constraints = [
+                    UniqueConstraint(
+                        OpClass(Lower("name"), name="text_pattern_ops"),
+                        name=constraint_name,
+                    )
+                ]
+
+        with connection.schema_editor() as editor:
+            editor.create_model(Place)
+
+        Place.objects.create(name="narnia")
+
+        # Different name, constraints are respected.
+        place = Place(name="mordor")
+        place.validate_constraints()
+        place.save()
+
+        # Different case of an already existing name, breaking constraints.
+        place = Place(name="Narnia")
+
+        with self.assertRaisesMessage(
+            ValidationError, f"Constraint “{constraint_name}” is violated."
+        ):
+            place.validate_constraints()
+
+        with self.assertRaisesMessage(
+            IntegrityError, "Key (lower(name::text))=(narnia) already exists."
+        ):
+            place.save()
+
 
 class ExclusionConstraintTests(PostgreSQLTestCase):
     def get_constraints(self, table):
